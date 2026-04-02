@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>VR Luxury Villa</title>
+    <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; overflow: hidden; background: #87CEEB; }
+
+      #loading-screen {
+        position: fixed;
+        inset: 0;
+        background: #0a0a1a;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        transition: opacity 0.8s ease;
+      }
+      #loading-screen.fade-out {
+        opacity: 0;
+        pointer-events: none;
+      }
+      .loading-title {
+        font-family: 'Georgia', serif;
+        font-size: 2rem;
+        color: #e8d5a3;
+        letter-spacing: 0.3em;
+        margin-bottom: 0.4rem;
+        text-transform: uppercase;
+      }
+      .loading-subtitle {
+        font-family: 'Georgia', serif;
+        font-size: 0.85rem;
+        color: #8899aa;
+        letter-spacing: 0.2em;
+        margin-bottom: 2.5rem;
+        text-transform: uppercase;
+      }
+      .progress-bar-wrap {
+        width: 280px;
+        height: 2px;
+        background: #1e2a3a;
+        border-radius: 2px;
+        overflow: hidden;
+        margin-bottom: 1rem;
+      }
+      .progress-bar-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #c8a96e, #e8d5a3);
+        border-radius: 2px;
+        transition: width 0.3s ease;
+      }
+      .loading-status {
+        font-family: 'Georgia', serif;
+        font-size: 0.75rem;
+        color: #556677;
+        letter-spacing: 0.15em;
+      }
+      .loading-icon {
+        font-size: 3rem;
+        margin-bottom: 1.5rem;
+        animation: pulse 2s ease-in-out infinite;
+      }
+      #fullscreen-button {
+        position: fixed;
+        top: 18px;
+        right: 18px;
+        padding: 0.85rem 1.15rem;
+        border: 1px solid rgba(255, 255, 255, 0.45);
+        border-radius: 999px;
+        background: rgba(10, 20, 34, 0.55);
+        color: #f7fbff;
+        font-family: 'Georgia', serif;
+        font-size: 0.78rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        cursor: pointer;
+        z-index: 9500;
+        backdrop-filter: blur(10px);
+        transition: background 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+      }
+      #fullscreen-button:hover {
+        background: rgba(22, 38, 58, 0.78);
+        border-color: rgba(255, 255, 255, 0.7);
+        transform: translateY(-1px);
+      }
+      #fullscreen-button:active {
+        transform: translateY(0);
+      }
+      #fullscreen-button:focus-visible {
+        outline: 2px solid rgba(255, 255, 255, 0.9);
+        outline-offset: 3px;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 0.6; transform: scale(1); }
+        50% { opacity: 1; transform: scale(1.05); }
+      }
+    </style>
+
+    <script>
+      AFRAME.registerComponent('water-motion', {
+        init: function () { this.time = 0; },
+        tick: function (t, dt) {
+          this.time += dt / 1000;
+          var mesh = this.el.getObject3D('mesh');
+          if (!mesh || !mesh.geometry) return;
+          if (!this.basePositions) {
+            if (!mesh.geometry.attributes.position) return;
+            this.basePositions = new Float32Array(mesh.geometry.attributes.position.array);
+          }
+          var pos = mesh.geometry.attributes.position;
+          for (var i = 0; i < pos.count; i++) {
+            var vx = this.basePositions[i * 3];
+            var vy = this.basePositions[i * 3 + 1];
+            var z  = (Math.sin(vx * 2.5 + this.time * 2.0) * 0.02) +
+                     (Math.cos(vy * 2.5 + this.time * 1.5) * 0.02) +
+                     (Math.sin((vx + vy) * 1.5 - this.time * 1.0) * 0.015);
+            pos.setZ(i, z);
+          }
+          pos.needsUpdate = true;
+          mesh.geometry.computeVertexNormals();
+        }
+      });
+
+      AFRAME.registerComponent('smart-colors', {
+        init: function () {
+          this.el.addEventListener('model-loaded', () => {
+            const obj = this.el.getObject3D('mesh');
+            if (!obj) return;
+            obj.frustumCulled = false;
+            const palette = { wall: 0xD2C9B1, window: 0x88BBDD };
+            obj.traverse(node => {
+              if (!node.isMesh) return;
+              node.frustumCulled = false;
+              const name = node.name.toLowerCase();
+              if (name.includes('window') || name.includes('glass')) {
+                node.material = new THREE.MeshPhysicalMaterial({
+                  color: palette.window, transparent: true, opacity: 0.3,
+                  reflectivity: 0.9, roughness: 0
+                });
+              } else if (name.includes('wall')) {
+                node.material = new THREE.MeshStandardMaterial({ color: palette.wall, roughness: 0.8 });
+              }
+              node.castShadow    = true;
+              node.receiveShadow = true;
+            });
+          });
+        }
+      });
+
+      function createSceneNode(tagName, attributes) {
+        var el = document.createElement(tagName);
+        Object.keys(attributes).forEach(function (key) {
+          el.setAttribute(key, attributes[key]);
+        });
+        return el;
+      }
+
+      function appendPineTree(parent, config) {
+        var tree = createSceneNode('a-entity', {
+          position: config.position,
+          rotation: '0 ' + (config.rotation || 0) + ' 0',
+          scale: config.scale + ' ' + config.scale + ' ' + config.scale
+        });
+
+        tree.appendChild(createSceneNode('a-cylinder', {
+          position: '0 1.45 0',
+          radius: 0.14,
+          height: 2.9,
+          material: 'color: #6b5037; roughness: 1',
+          shadow: 'cast: false; receive: false'
+        }));
+        tree.appendChild(createSceneNode('a-cone', {
+          position: '0 3.1 0',
+          'radius-bottom': 1.45,
+          height: 2.8,
+          material: 'color: ' + config.color + '; roughness: 1',
+          shadow: 'cast: false; receive: false'
+        }));
+        tree.appendChild(createSceneNode('a-cone', {
+          position: '0 4.2 0',
+          'radius-bottom': 1.12,
+          height: 2.35,
+          material: 'color: ' + config.color + '; roughness: 1',
+          shadow: 'cast: false; receive: false'
+        }));
+        tree.appendChild(createSceneNode('a-cone', {
+          position: '0 5.15 0',
+          'radius-bottom': 0.78,
+          height: 1.75,
+          material: 'color: ' + config.color + '; roughness: 1',
+          shadow: 'cast: false; receive: false'
+        }));
+
+        parent.appendChild(tree);
+      }
+
+      function appendCanopyTree(parent, config) {
+        var tree = createSceneNode('a-entity', {
+          position: config.position,
+          rotation: '0 ' + (config.rotation || 0) + ' 0',
+          scale: config.scale + ' ' + config.scale + ' ' + config.scale
+        });
+
+        tree.appendChild(createSceneNode('a-cylinder', {
+          position: '0 1.6 0',
+          radius: 0.17,
+          height: 3.2,
+          material: 'color: #75573b; roughness: 1',
+          shadow: 'cast: false; receive: false'
+        }));
+        tree.appendChild(createSceneNode('a-sphere', {
+          position: '-0.55 3.95 0.05',
+          radius: 1.2,
+          scale: '1.1 0.95 1',
+          material: 'color: ' + config.color + '; roughness: 1',
+          shadow: 'cast: false; receive: false'
+        }));
+        tree.appendChild(createSceneNode('a-sphere', {
+          position: '0.1 4.45 0.15',
+          radius: 1.4,
+          scale: '1.22 1 1.08',
+          material: 'color: ' + config.color + '; roughness: 1',
+          shadow: 'cast: false; receive: false'
+        }));
+        tree.appendChild(createSceneNode('a-sphere', {
+          position: '0.72 3.92 -0.08',
+          radius: 1.08,
+          scale: '1 0.9 0.96',
+          material: 'color: ' + config.color + '; roughness: 1',
+          shadow: 'cast: false; receive: false'
+        }));
+
+        parent.appendChild(tree);
+      }
+
+      function appendCloud(parent, config) {
+        var cloud = createSceneNode('a-entity', {
+          position: config.position,
+          rotation: '0 ' + (config.rotation || 0) + ' 0',
+          scale: config.scale + ' ' + config.scale + ' ' + config.scale,
+          'cloud-drift': 'range: ' + config.range + '; speed: ' + config.speed + '; bob: ' + config.bob
+        });
+        var puffs = [
+          { position: '-4.1 0.05 0', radius: 2.2, scale: '1.82 0.84 1.14' },
+          { position: '-1.5 0.62 0.42', radius: 2.6, scale: '1.88 0.96 1.18' },
+          { position: '1.85 0.48 0.08', radius: 2.3, scale: '1.72 0.9 1.08' },
+          { position: '4.2 -0.05 -0.18', radius: 1.85, scale: '1.56 0.8 1' },
+          { position: '0.9 -0.42 -0.35', radius: 1.72, scale: '1.5 0.72 0.95' }
+        ];
+
+        puffs.forEach(function (puff, index) {
+          cloud.appendChild(createSceneNode('a-sphere', {
+            position: puff.position,
+            radius: puff.radius,
+            scale: puff.scale,
+            material: 'color: ' + (index % 2 === 0 ? '#ffffff' : '#f3f8ff') + '; transparent: true; opacity: 0.9; roughness: 1; metalness: 0',
+            shadow: 'cast: false; receive: false'
+          }));
+        });
+
+        parent.appendChild(cloud);
+      }
+
+      AFRAME.registerComponent('cloud-drift', {
+        schema: {
+          range: { default: 1.5 },
+          speed: { default: 0.000018 },
+          bob: { default: 0.14 }
+        },
+        init: function () {
+          this.origin = this.el.object3D.position.clone();
+          this.phase = Math.random() * Math.PI * 2;
+        },
+        tick: function (time) {
+          this.el.object3D.position.x = this.origin.x + Math.sin((time * this.data.speed) + this.phase) * this.data.range;
+          this.el.object3D.position.y = this.origin.y + Math.cos((time * this.data.speed * 1.7) + this.phase) * this.data.bob;
+        }
+      });
+
+      AFRAME.registerComponent('landscape-populator', {
+        init: function () {
+          var root = createSceneNode('a-entity', { id: 'distant-scenery' });
+          var hillSpecs = [
+            { position: '-88 5.2 -126', radius: 25, scale: '2.1 0.2 0.92', color: '#6a7f58' },
+            { position: '-24 4.4 -144', radius: 30, scale: '2.15 0.17 0.78', color: '#738962' },
+            { position: '38 4.8 -136', radius: 28, scale: '2.4 0.18 0.84', color: '#7d9468' },
+            { position: '96 5.5 -122', radius: 22, scale: '1.95 0.2 0.88', color: '#688055' },
+            { position: '0 4.5 114', radius: 32, scale: '2.35 0.16 0.82', color: '#6e865a' }
+          ];
+          var mountainSpecs = [
+            { position: '-70 18 -178', radius: 38, height: 48, color: '#9aa7a7', opacity: 0.68 },
+            { position: '4 23 -188', radius: 48, height: 62, color: '#a6b3b0', opacity: 0.62 }
+          ];
+          var forestBands = [
+            { axis: 'x', start: -102, end: 102, fixed: -78, count: 8, jitter: 6, depthJitter: 11, scaleMin: 1.02, scaleMax: 1.42 },
+            { axis: 'x', start: -116, end: 116, fixed: -98, count: 10, jitter: 8, depthJitter: 13, scaleMin: 1.1, scaleMax: 1.66 },
+            { axis: 'z', start: -86, end: 84, fixed: -110, count: 6, jitter: 7, depthJitter: 10, scaleMin: 0.98, scaleMax: 1.42 },
+            { axis: 'z', start: -82, end: 88, fixed: 112, count: 6, jitter: 7, depthJitter: 10, scaleMin: 0.98, scaleMax: 1.42 }
+          ];
+          var frameTreeSpecs = [
+            { position: '-28 0 -26', scale: 1.65, color: '#34543f', rotation: 8, type: 'pine' },
+            { position: '30 0 -24', scale: 1.72, color: '#2f4c39', rotation: -10, type: 'pine' },
+            { position: '-32 0 24', scale: 1.45, color: '#4f6f53', rotation: -4, type: 'canopy' },
+            { position: '34 0 28', scale: 1.38, color: '#527159', rotation: 6, type: 'canopy' }
+          ];
+          var cloudSpecs = [
+            { position: '-58 24 -98', scale: 1.18, range: 1.6, speed: 0.000017, bob: 0.14, rotation: -8 },
+            { position: '8 28 -126', scale: 1.42, range: 2.1, speed: 0.000014, bob: 0.18, rotation: 4 },
+            { position: '10 25 96', scale: 1.14, range: 1.35, speed: 0.000016, bob: 0.12, rotation: 2 }
+          ];
+          var treePalette = ['#2a4534', '#33553d', '#446a4c', '#55785d'];
+
+          root.appendChild(createSceneNode('a-sphere', {
+            position: '-96 51 -178',
+            radius: 8.5,
+            material: 'shader: flat; color: #fff2c2; transparent: true; opacity: 0.98',
+            shadow: 'cast: false; receive: false'
+          }));
+          root.appendChild(createSceneNode('a-sphere', {
+            position: '-96 51 -178',
+            radius: 16,
+            scale: '1.8 1.8 1.8',
+            material: 'shader: flat; color: #ffe7a6; transparent: true; opacity: 0.14',
+            shadow: 'cast: false; receive: false'
+          }));
+          root.appendChild(createSceneNode('a-sphere', {
+            position: '-14 10 -160',
+            radius: 26,
+            scale: '4.2 0.26 1.1',
+            material: 'color: #d8e5dc; transparent: true; opacity: 0.22; roughness: 1',
+            shadow: 'cast: false; receive: false'
+          }));
+
+          hillSpecs.forEach(function (hill) {
+            root.appendChild(createSceneNode('a-sphere', {
+              position: hill.position,
+              radius: hill.radius,
+              scale: hill.scale,
+              material: 'color: ' + hill.color + '; roughness: 1; metalness: 0',
+              shadow: 'cast: false; receive: false'
+            }));
+          });
+
+          mountainSpecs.forEach(function (mountain) {
+            root.appendChild(createSceneNode('a-cone', {
+              position: mountain.position,
+              'radius-bottom': mountain.radius,
+              height: mountain.height,
+              material: 'color: ' + mountain.color + '; transparent: true; opacity: ' + mountain.opacity + '; roughness: 1',
+              shadow: 'cast: false; receive: false'
+            }));
+          });
+
+          forestBands.forEach(function (band, bandIndex) {
+            for (var i = 0; i < band.count; i++) {
+              var progress = band.count === 1 ? 0.5 : i / (band.count - 1);
+              var base = band.start + ((band.end - band.start) * progress);
+              var sway = Math.sin((i + 1) * 1.73 + bandIndex) * band.jitter;
+              var depth = Math.cos((i + 1) * 2.11 + bandIndex) * band.depthJitter;
+              var position = band.axis === 'x'
+                ? (base + sway).toFixed(2) + ' 0 ' + (band.fixed + depth).toFixed(2)
+                : (band.fixed + depth).toFixed(2) + ' 0 ' + (base + sway).toFixed(2);
+              var scale = band.scaleMin + (Math.abs(Math.sin((i + 1) * 1.47)) * (band.scaleMax - band.scaleMin));
+              var color = treePalette[(i + bandIndex) % treePalette.length];
+              var rotation = Math.round(Math.sin((i + 1) * 2.23) * 12);
+              var treeConfig = {
+                position: position,
+                scale: Number(scale.toFixed(2)),
+                color: color,
+                rotation: rotation
+              };
+
+              if ((i + bandIndex) % 4 === 0) {
+                appendCanopyTree(root, treeConfig);
+              } else {
+                appendPineTree(root, treeConfig);
+              }
+            }
+          });
+
+          frameTreeSpecs.forEach(function (tree) {
+            if (tree.type === 'canopy') {
+              appendCanopyTree(root, tree);
+            } else {
+              appendPineTree(root, tree);
+            }
+          });
+
+          cloudSpecs.forEach(function (cloud) {
+            appendCloud(root, cloud);
+          });
+
+          this.el.appendChild(root);
+        }
+      });
+
+      window.addEventListener('DOMContentLoaded', () => {
+        const screen = document.getElementById('loading-screen');
+        const fill   = document.getElementById('progress-fill');
+        const status = document.getElementById('loading-status');
+        const fullscreenButton = document.getElementById('fullscreen-button');
+
+        const assets = [
+          'assets/modern_dream_house1.glb',
+          'assets/car.glb',
+          'assets/doghouse.glb',
+          'assets/dog.glb'
+        ];
+        const labels = ['Loading villa…', 'Loading car…', 'Loading doghouse…', 'Loading pet…'];
+        let loaded = 0;
+
+        function getFullscreenElement() {
+          return document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement || null;
+        }
+
+        function updateFullscreenButton() {
+          if (!fullscreenButton) return;
+          fullscreenButton.textContent = getFullscreenElement() ? 'Exit Full Screen' : 'Full Screen';
+        }
+
+        function requestPageFullscreen() {
+          const target = document.documentElement;
+          if (target.requestFullscreen) return target.requestFullscreen();
+          if (target.webkitRequestFullscreen) return target.webkitRequestFullscreen();
+          if (target.msRequestFullscreen) return target.msRequestFullscreen();
+          return Promise.reject(new Error('Fullscreen is not supported'));
+        }
+
+        function exitPageFullscreen() {
+          if (document.exitFullscreen) return document.exitFullscreen();
+          if (document.webkitExitFullscreen) return document.webkitExitFullscreen();
+          if (document.msExitFullscreen) return document.msExitFullscreen();
+          return Promise.reject(new Error('Fullscreen exit is not supported'));
+        }
+
+        function tick(i) {
+          loaded++;
+          fill.style.width = Math.round((loaded / assets.length) * 100) + '%';
+          status.textContent = labels[i] || 'Finishing up…';
+          if (loaded === assets.length) setTimeout(dismiss, 400);
+        }
+        function dismiss() {
+          status.textContent = 'Welcome.';
+          fill.style.width   = '100%';
+          setTimeout(() => {
+            screen.classList.add('fade-out');
+            setTimeout(() => screen.remove(), 900);
+          }, 500);
+        }
+
+        if (fullscreenButton) {
+          fullscreenButton.addEventListener('click', () => {
+            const action = getFullscreenElement() ? exitPageFullscreen() : requestPageFullscreen();
+            if (action && typeof action.catch === 'function') {
+              action.catch(() => {});
+            }
+          });
+          document.addEventListener('fullscreenchange', updateFullscreenButton);
+          document.addEventListener('webkitfullscreenchange', updateFullscreenButton);
+          document.addEventListener('msfullscreenchange', updateFullscreenButton);
+          updateFullscreenButton();
+        }
+
+        assets.forEach((src, i) => fetch(src).then(() => tick(i)).catch(() => tick(i)));
+      });
+    </script>
+  </head>
+  <body>
+
+    <div id="loading-screen">
+      <div class="loading-icon">🏛️</div>
+      <div class="loading-title">Luxury Villa</div>
+      <div class="loading-subtitle">Virtual Estate Tour</div>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar-fill" id="progress-fill"></div>
+      </div>
+      <div class="loading-status" id="loading-status">Preparing estate…</div>
+    </div>
+
+    <button id="fullscreen-button" type="button" aria-label="Toggle full screen">Full Screen</button>
+
+    <a-scene
+      renderer="antialias: true; shadowMapEnabled: true; colorManagement: true; exposure: 0.9; toneMapping: reinhard; logarithmicDepthBuffer: true"
+      shadow="type: pcfsoft"
+      fog="type: linear; color: #dbe8ef; near: 90; far: 230"
+      vr-mode-ui="enabled: false"
+      loading-screen="enabled: false">
+
+      <a-assets timeout="60000">
+        <a-asset-item id="mansion-model"  src="assets/modern_dream_house1.glb"></a-asset-item>
+        <a-asset-item id="car-model"      src="assets/car.glb"></a-asset-item>
+        <a-asset-item id="doghouse-model" src="assets/doghouse.glb"></a-asset-item>
+        <a-asset-item id="dog-model"      src="assets/dog.glb"></a-asset-item>
+
+        <img id="pool-tile-tex"
+          src="data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2264%22%20height%3D%2264%22%3E%3Crect%20width%3D%2264%22%20height%3D%2264%22%20fill%3D%22%23b0bec5%22%2F%3E%3Crect%20x%3D%222%22%20y%3D%222%22%20width%3D%2228%22%20height%3D%2228%22%20fill%3D%22%2329b6f6%22%2F%3E%3Crect%20x%3D%2234%22%20y%3D%222%22%20width%3D%2228%22%20height%3D%2228%22%20fill%3D%22%2303a9f4%22%2F%3E%3Crect%20x%3D%222%22%20y%3D%2234%22%20width%3D%2228%22%20height%3D%2228%22%20fill%3D%22%230288d1%22%2F%3E%3Crect%20x%3D%2234%22%20y%3D%2234%22%20width%3D%2228%22%20height%3D%2228%22%20fill%3D%22%230277bd%22%2F%3E%3C%2Fsvg%3E"
+          crossorigin="anonymous">
+      </a-assets>
+
+      <a-sky color="#9fcdf2"></a-sky>
+      <a-entity id="surroundings" landscape-populator></a-entity>
+
+      <a-plane position="0 -0.1 -10" rotation="-90 0 0" width="500" height="500"
+               material="color: #4B6332; roughness: 1" shadow="receive: true"></a-plane>
+      <a-plane position="8 0.01 -5" rotation="-90 0 0" width="8" height="12"
+               material="color: #333; roughness: 0.9" shadow="receive: true"></a-plane>
+
+      <a-entity light="type: ambient; intensity: 0.7; color: #FFFFFF"></a-entity>
+      <a-entity light="type: directional; castShadow: true; intensity: 1.0; color: #FFF8D6"
+                position="-15 25 10"></a-entity>
+      <a-entity light="type: point; intensity: 0.6; distance: 12; color: #FFF8DC" position="-2 2 -8"></a-entity>
+      <a-entity light="type: point; intensity: 0.5; distance: 10; color: #FFE4B5" position="-4 2 -12"></a-entity>
+
+      <a-entity id="mansion" gltf-model="assets/modern_dream_house1.glb" position="0 0.2 -10" smart-colors="" shadow=""></a-entity>
+
+      <a-entity id="luxury-car" gltf-model="assets/car.glb" position="7.355 -0.01543 4.8345" rotation="0 -45 0" scale="0.01 0.01 0.01" shadow=""></a-entity>
+
+      <a-entity id="dog-house" gltf-model="assets/doghouse.glb"
+                position="-8.57217 0.3287 -4.00396" rotation="0 -3.427"
+                scale="-0.01557 0.01739 0.01739" shadow=""></a-entity>
+      
+      <a-entity id="dog" gltf-model="assets/dog.glb" position="-7.8 0.31567 -2.19506" rotation="0 -45 0" scale="1.32714 1.32714 1.32714" shadow=""></a-entity>
+
+      <a-entity id="pool-area" position="-7.302 0.1 4.995" scale="0.6 0.6 0.6">
+
+        <a-box position="0 0.6 -2.75" width="10" height="1.2" depth="0.5" color="#e8e8e8" material="roughness: 0.9" shadow="cast: true; receive: true"></a-box>
+        <a-box position="0 0.6 3.25" width="10" height="1.2" depth="0.5" color="#e8e8e8" material="roughness: 0.9" shadow="cast: true; receive: true"></a-box>
+        <a-box position="-4.75 0.6 0.25" width="0.5" height="1.2" depth="5.5" color="#e8e8e8" material="roughness: 0.9" shadow="cast: true; receive: true"></a-box>
+        <a-box position="4.75 0.6 0.25" width="0.5" height="1.2" depth="5.5" color="#e8e8e8" material="roughness: 0.9" shadow="cast: true; receive: true"></a-box>
+
+        <a-plane position="0 0.6 3" rotation="0 180 0" width="9" height="1.2" material="src: #pool-tile-tex; repeat: 18 2.4; roughness: 0.7"></a-plane>
+        <a-plane position="0 0.6 -2.5" width="9" height="1.2" material="src: #pool-tile-tex; repeat: 18 2.4; roughness: 0.7"></a-plane>
+        <a-plane position="-4.5 0.6 0.25" rotation="0 90 0" width="5.5" height="1.2" material="src: #pool-tile-tex; repeat: 11 2.4; roughness: 0.7"></a-plane>
+        <a-plane position="4.5 0.6 0.25" rotation="0 -90 0" width="5.5" height="1.2" material="src: #pool-tile-tex; repeat: 11 2.4; roughness: 0.7"></a-plane>
+
+        <a-plane position="0 0.15 0.25" rotation="-90 0 0" width="9" height="5.5" material="src: #pool-tile-tex; repeat: 18 11; roughness: 0.8"></a-plane>
+
+        <a-box position="0 1.25 -2.75" width="10.4" height="0.1" depth="0.5" color="#d1d1d1"></a-box>
+        <a-box position="0 1.25 3.25" width="10.4" height="0.1" depth="0.5" color="#d1d1d1"></a-box>
+        <a-box position="-4.75 1.25 0.25" width="0.5" height="0.1" depth="5.5" color="#d1d1d1"></a-box>
+        <a-box position="4.75 1.25 0.25" width="0.5" height="0.1" depth="5.5" color="#d1d1d1"></a-box>
+
+        <a-entity id="pool-stairs" position="0 0 -3.4" shadow="cast: true; receive: true">
+          <a-box position="0 0.2 -0.8" width="4" height="0.2" depth="0.4" color="#6e503b"></a-box>
+          <a-box position="0 0.4 -0.4" width="4" height="0.4" depth="0.4" color="#6e503b"></a-box>
+          <a-box position="0 0.6 0" width="4" height="0.6" depth="0.8" color="#6e503b"></a-box>
+        </a-entity>
+
+        <a-plane position="0 1.1 0.25" rotation="-90 0 0" width="8.9" height="5.3" segments-width="20" segments-height="15" material="color: #4db8ff; opacity: 0.7; transparent: true; metalness: 0.9; roughness: 0.1" water-motion shadow="receive: true"></a-plane>
+
+        <a-entity position="4.3 1.25 -1.2">
+          <a-torus position="-0.1 0.4 0" radius="0.3" radiusTubular="0.03" rotation="0 90 0" color="#fff" material="metalness: 0.9; roughness: 0.1"></a-torus>
+          <a-torus position="-0.7 0.4 0" radius="0.3" radiusTubular="0.03" rotation="0 90 0" color="#fff" material="metalness: 0.9; roughness: 0.1"></a-torus>
+          <a-cylinder position="-0.1 0 0.3" radius="0.03" height="0.1" color="#fff"></a-cylinder>
+          <a-cylinder position="-0.7 0 0.3" radius="0.03" height="0.1" color="#fff"></a-cylinder>
+          <a-cylinder position="-0.1 -0.4 -0.3" radius="0.03" height="1.6" color="#fff"></a-cylinder>
+          <a-cylinder position="-0.7 -0.4 -0.3" radius="0.03" height="1.6" color="#fff"></a-cylinder>
+          <a-cylinder position="-0.4 0.1 -0.3" radius="0.02" height="0.6" rotation="0 0 90" color="#fff"></a-cylinder>
+          <a-cylinder position="-0.4 -0.3 -0.3" radius="0.02" height="0.6" rotation="0 0 90" color="#fff"></a-cylinder>
+          <a-cylinder position="-0.4 -0.7 -0.3" radius="0.02" height="0.6" rotation="0 0 90" color="#fff"></a-cylinder>
+          <a-cylinder position="-0.4 -1.1 -0.3" radius="0.02" height="0.6" rotation="0 0 90" color="#fff"></a-cylinder>
+        </a-entity>
+
+        <a-sphere position="-3.5 0.5 1" radius="0.1" material="color: #fff; emissive: #4db8ff; emissiveIntensity: 2; transparent: true; opacity: 0.9"></a-sphere>
+        <a-entity light="type: point; color: #4db8ff; intensity: 1.2; distance: 7" position="-3.5 0.5 1"></a-entity>
+        <a-sphere position="3.5 0.5 -1" radius="0.1" material="color: #fff; emissive: #4db8ff; emissiveIntensity: 2; transparent: true; opacity: 0.9"></a-sphere>
+        <a-entity light="type: point; color: #4db8ff; intensity: 1.2; distance: 7" position="3.5 0.5 -1"></a-entity>
+      </a-entity>
+
+      <a-entity position="0 0.5 15">
+        <a-camera wasd-controls="acceleration: 40" look-controls>
+          <a-cursor color="#FFF"></a-cursor>
+        </a-camera>
+      </a-entity>
+
+    </a-scene>
+  </body>
+</html>
